@@ -143,9 +143,9 @@ impl Motor {
         self.command_voltage_raw = 0.0;
     }
 
-    /// GM6020 feedback: bytes 0-1 angle (0..=8191), 2-3 speed in rpm (signed),
-    /// 4-5 current (signed, raw), 6 temperature in degC; all big-endian.
     pub fn read(&mut self, data: &[u8; 8]) {
+        // TODO: decode angle, speed and current as the manual describes.
+        // todo!("Decode motor feedback");
         self.angle_raw = u16::from_be_bytes([data[0], data[1]]) & 0x1FFF;
         self.angle_rad = self.angle_raw as f32 * (TAU / 8192.0);
         self.speed_rpm = i16::from_be_bytes([data[2], data[3]]) as f32;
@@ -155,6 +155,7 @@ impl Motor {
 }
 
 /// PID gains, plus the integral and history kept between ticks.
+// TODO: add gains, history, an integral limit and a symmetric output limit `maxout`.
 #[derive(Default)]
 pub struct Pid {
     pub kp: f32,
@@ -175,6 +176,7 @@ pub struct Pid {
 }
 
 impl Pid {
+    // TODO: clear the integral and history.
     pub const fn new(kp: f32, ki: f32, kd: f32, max_i: f32, maxout: f32) -> Self {
         Self {
             kp,
@@ -202,6 +204,7 @@ impl Pid {
     /// and returns rpm; the speed loop takes rpm and returns voltage counts. `dt_s` is in seconds.
     /// If a position loop returns rad/s, convert it to rpm before passing it to the speed loop.
     pub fn calculate(&mut self, target: f32, measured: f32, dt_s: f32) -> f32 {
+        // TODO: compute the PID with dt_s, and limit the integral and output.
         let error = target - measured;
         if !error.is_finite() || dt_s.is_nan() || dt_s <= 0.0 {
             self.reset();
@@ -431,6 +434,7 @@ impl Axis {
 }
 
 /// State shared by every control tick.
+// TODO: add feedback ages and a fault record.
 pub struct Control {
     pub state: State,
     pub yaw: Axis,
@@ -547,6 +551,8 @@ impl Control {
         while let Ok(received) = receiver.try_receive() {
             match received {
                 Ok(envelope) => {
+                    // TODO: check the ID and length, pass the data to the matching axis's
+                    // `Motor::read`, and record its feedback age.
                     let frame = envelope.frame;
                     let id = match frame.id() {
                         embedded_can::Id::Standard(id) => id.as_raw(),
@@ -637,6 +643,7 @@ impl Control {
     }
 
     /// Choose the state from the remote, feedback and fault conditions.
+    // TODO: the transitions, and initialising targets and PIDs on entering a state.
     pub fn update_mode(&mut self) {
         let right = self.remote.map(|r| r.right_switch);
         let left = self.remote.map(|r| r.left_switch);
@@ -654,6 +661,7 @@ impl Control {
         match self.state {
             State::Waiting => {
                 if enable_request {
+                    // TODO: enter Prepare after valid feedback and a new enable request.
                     if feedback_ok {
                         self.enter_prepare();
                     } else {
@@ -662,6 +670,7 @@ impl Control {
                 }
             }
             State::Prepare => {
+                // TODO: enter Running once recentering settles; stop on a timeout or fault.
                 if right != Some(3) {
                     self.set_state(State::Waiting, "disable");
                 } else if !feedback_ok {
@@ -682,6 +691,7 @@ impl Control {
                 }
             }
             State::Running => {
+                // TODO: handle disable/feedback loss; stall or sustained high-frequency oscillation enters Error.
                 if right != Some(3) {
                     self.set_state(State::Waiting, "disable");
                 } else if !feedback_ok {
@@ -691,6 +701,8 @@ impl Control {
                 }
             }
             State::Error => {
+                // TODO: keep zero output until a new remote recovery gesture; hold current angles,
+                // clear PID history and detection counters, then return to Running.
                 if recover_request {
                     if feedback_ok {
                         for axis in [&mut self.yaw, &mut self.pitch] {
@@ -713,6 +725,8 @@ impl Control {
     }
 
     /// Set targets for the current state, run each axis's PIDs and write the voltage commands.
+    // TODO: limited recentering in Prepare, remote cascade control in Running, and
+    // `disable_all` in Waiting and Error. Each tick is 0.001 s.
     pub fn update(&mut self) {
         match self.state {
             State::Waiting | State::Error => {
@@ -744,6 +758,9 @@ impl Control {
     /// counts it in `TX_FAILED`.
     pub fn transmit(&mut self, can: &mut Can1) {
         let mut data = [0u8; 8];
+        // TODO: clamp each voltage count output within the bench limit (protocol +/-25000),
+        // encode signed i16 big-endian and write it into the
+        // bytes for its motor ID as the manual describes. Other motor IDs stay zero.
         for axis in [&self.yaw, &self.pitch] {
             // NaN clamps to NaN, which casts to 0.
             let counts = axis.motor.command_voltage_raw.clamp(-OUTPUT_LIMIT, OUTPUT_LIMIT) as i16;
