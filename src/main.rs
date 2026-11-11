@@ -18,33 +18,20 @@ const REMOTE_SILENT_TICKS: u16 = 100;
 const TICK: Duration = Duration::from_millis(1);
 const DT_S: f32 = 0.001;
 
-// ---------------------------------------------------------------------------------------
-// Rig configuration. Confirm every value here on the rig before enabling output.
-// ---------------------------------------------------------------------------------------
-
-/// GM6020 DIP-switch IDs. Feedback arrives on 0x204 + ID; the 0x1FF voltage frame
-/// carries ID n in bytes 2(n-1) and 2(n-1)+1.
+//------------------------------------------Self Defined Constants--------------------------------------------
 const YAW_MOTOR_ID: u16 = 1;
 const PITCH_MOTOR_ID: u16 = 2;
 const FEEDBACK_BASE_ID: u16 = 0x204;
 
-/// Mechanical zero, raw count 0..=8191, read with output disabled while the rig is held
-/// at the agreed front / level pose. `None` disables recentering for that axis: Prepare
-/// then holds the pose it starts from instead of moving to a guessed reference.
 const YAW_ZERO_COUNT: Option<u16> = None;
 const PITCH_ZERO_COUNT: Option<u16> = None;
 
-/// Pitch range in motor-shaft rad relative to the reference pose. Pitch is driven through
-/// a linkage, so these are motor angles, not joint angles. Conservative placeholders:
-/// replace with the measured range of the rig.
 const PITCH_MIN_RAD: f32 = -0.35;
 const PITCH_MAX_RAD: f32 = 0.35;
 
-/// Flip these if stick left/right or up/down moves the rig the wrong way.
 const YAW_STICK_SIGN: f32 = 1.0;
 const PITCH_STICK_SIGN: f32 = 1.0;
 
-/// Bench output limit in voltage counts (protocol +/-25000).
 const OUTPUT_LIMIT: f32 = 10000.0;
 
 // ---------------------------------------------------------------------------------------
@@ -58,8 +45,7 @@ const MAX_TARGET_RATE_RAD_S: f32 = 1.0;
 /// Feedback older than this many ticks counts as lost. GM6020 reports at 1 kHz.
 const FEEDBACK_TIMEOUT_TICKS: u16 = 20;
 
-/// Recentering limits and completion: both axes within the angle and speed bands for
-/// `SETTLE_TICKS` in a row. Not settled after `PREPARE_TIMEOUT_TICKS` returns to Waiting.
+/// Recentering limits and completion
 const PREPARE_MAX_RPM: f32 = 30.0;
 const PREPARE_MAX_OUTPUT: f32 = 5000.0;
 const SETTLE_ANGLE_RAD: f32 = 0.03;
@@ -67,19 +53,16 @@ const SETTLE_SPEED_RPM: f32 = 5.0;
 const SETTLE_TICKS: u16 = 300;
 const PREPARE_TIMEOUT_TICKS: u16 = 5000;
 
-/// Suspected stall: |target speed| >= 10 rpm, |output| >= 4000 counts and |speed| <= 3 rpm,
-/// all held for 500 ticks (0.5 s).
-const STALL_TARGET_RPM: f32 = 10.0;
-const STALL_OUTPUT: f32 = 4000.0;
-const STALL_SPEED_RPM: f32 = 3.0;
-const STALL_TICKS: u16 = 500;
+/// Suspected stall:
+const STALL_TARGET_RPM: f32 = 10.0; //rpm
+const STALL_OUTPUT: f32 = 4000.0;   //counts
+const STALL_SPEED_RPM: f32 = 3.0;   //rpm
+const STALL_TICKS: u16 = 500;       //ms
 
-/// Sustained oscillation: the speed swings past +/-15 rpm in both directions, each full
-/// swing (+ to - and back to +) is timed as one period, and every period stays above
-/// 8 Hz for a total of 500 ticks (0.5 s, at least four periods).
-const OSC_BAND_RPM: f32 = 15.0;
-const OSC_FREQ_HZ: f32 = 8.0;
-const OSC_SUSTAIN_TICKS: u16 = 500;
+/// Sustained oscillation
+const OSC_BAND_RPM: f32 = 15.0;     //rpm
+const OSC_FREQ_HZ: f32 = 8.0;       //Hz
+const OSC_SUSTAIN_TICKS: u16 = 500; //ms
 /// The longest period still faster than `OSC_FREQ_HZ`, in ticks.
 const OSC_MAX_PERIOD_TICKS: u16 = (1000.0 / OSC_FREQ_HZ) as u16;
 
@@ -90,6 +73,7 @@ const LOG_TX_FRAMES: bool = false;
 /// motor acknowledges frames.
 pub static TX_FAILED: AtomicU32 = AtomicU32::new(0);
 
+//=======================================Helper Functions========================================
 /// Wrap an angle in rad to (-pi, pi].
 fn wrap_pi(mut x: f32) -> f32 {
     if !x.is_finite() {
@@ -126,12 +110,12 @@ fn stick(raw: i16) -> f32 {
 pub struct Motor {
     /// Raw single-turn mechanical angle, 0..=8191 for one turn.
     pub angle_raw: u16,
+    pub temperature_c: u8,
     /// Single-turn motor shaft angle in rad; turns are not counted.
     pub angle_rad: f32,
     pub speed_rpm: f32,
     /// Feedback current as sent on the wire. The motor manual gives no scale to amperes.
     pub current_raw: i16,
-    pub temperature_c: u8,
     /// Voltage command counts, not volts; protocol range +/-25000.
     pub command_voltage_raw: f32,
 }
@@ -143,7 +127,7 @@ impl Motor {
         self.command_voltage_raw = 0.0;
     }
 
-    pub fn read(&mut self, data: &[u8; 8]) {
+    pub fn read(&mut self, _data: &[u8; 8]) {
         // TODO: decode angle, speed and current as the manual describes.
         // todo!("Decode motor feedback");
         self.angle_raw = u16::from_be_bytes([data[0], data[1]]) & 0x1FFF;
@@ -193,6 +177,7 @@ impl Pid {
     }
 
     pub fn reset(&mut self) {
+        // todo!("Clear PID history");
         self.i_out = 0.0;
         self.last_error = None;
         self.p_out = 0.0;
@@ -203,8 +188,9 @@ impl Pid {
     /// `target` and `measured` share a unit, set by the caller. The position loop takes rad
     /// and returns rpm; the speed loop takes rpm and returns voltage counts. `dt_s` is in seconds.
     /// If a position loop returns rad/s, convert it to rpm before passing it to the speed loop.
-    pub fn calculate(&mut self, target: f32, measured: f32, dt_s: f32) -> f32 {
+    pub fn calculate(&mut self, _target: f32, _measured: f32, _dt_s: f32) -> f32 {
         // TODO: compute the PID with dt_s, and limit the integral and output.
+        // todo!("Implement PID");
         let error = target - measured;
         if !error.is_finite() || dt_s.is_nan() || dt_s <= 0.0 {
             self.reset();
@@ -220,17 +206,6 @@ impl Pid {
         self.output = (self.p_out + self.i_out + self.d_out).clamp(-self.maxout, self.maxout);
         self.output
     }
-}
-
-/// Run the PID checks from the README once at startup and print the results.
-fn pid_self_test() {
-    let mut pid = Pid::new(2.0, 0.0, 0.0, 0.0, 100.0);
-    let a = pid.calculate(10.0, 7.0, DT_S);
-    pid.maxout = 5.0;
-    let b = pid.calculate(10.0, 7.0, DT_S);
-    pid.maxout = 0.0;
-    let c = pid.calculate(10.0, 7.0, DT_S);
-    rtt_target::rprintln!("PID self-test: {} (6) {} (5) {} (0)", a, b, c);
 }
 
 /// The gimbal's stage, which decides the allowed operations and outputs.
@@ -279,17 +254,11 @@ pub struct AxisConfig {
 /// Stall and oscillation detection for one axis.
 #[derive(Default)]
 pub struct Detector {
-    /// Ticks the stall condition has held.
     pub stall_ticks: u16,
-    /// Which side of the +/-band the speed was last on: 1, -1, or 0 before the first.
     osc_side: i8,
-    /// Whether a period start has been seen, so the next one closes a full period.
     osc_timing: bool,
-    /// Ticks since the current period started.
     pub osc_period_ticks: u16,
-    /// Frequency of the last complete period, Hz.
     pub osc_freq_hz: f32,
-    /// Total ticks of consecutive periods faster than `OSC_FREQ_HZ`.
     pub osc_fast_ticks: u16,
 }
 
@@ -346,6 +315,7 @@ impl Detector {
 }
 
 /// One gimbal axis: its motor, targets and cascaded PIDs.
+#[derive(Default)]
 pub struct Axis {
     pub config: AxisConfig,
     pub motor: Motor,
@@ -535,9 +505,6 @@ impl Control {
         if self.remote.is_none() {
             self.disable_all();
             if self.state != State::Error {
-                if self.state != State::Waiting {
-                    rtt_target::rprintln!("{:?} -> Waiting: remote lost", self.state);
-                }
                 self.state = State::Waiting;
             }
         }
@@ -545,15 +512,13 @@ impl Control {
 
     /// Read every queued CAN frame without waiting for more.
     pub fn read_feedback(&mut self, can: &mut Can1) {
-        self.yaw.feedback_age_ticks = self.yaw.feedback_age_ticks.saturating_add(1);
-        self.pitch.feedback_age_ticks = self.pitch.feedback_age_ticks.saturating_add(1);
         let receiver = can.reader();
         while let Ok(received) = receiver.try_receive() {
             match received {
                 Ok(envelope) => {
                     // TODO: check the ID and length, pass the data to the matching axis's
                     // `Motor::read`, and record its feedback age.
-                    let frame = envelope.frame;
+                    let _frame = envelope.frame;
                     let id = match frame.id() {
                         embedded_can::Id::Standard(id) => id.as_raw(),
                         embedded_can::Id::Extended(_) => continue,
@@ -647,7 +612,7 @@ impl Control {
     pub fn update_mode(&mut self) {
         let right = self.remote.map(|r| r.right_switch);
         let left = self.remote.map(|r| r.left_switch);
-        // Enable: right switch from down (2) to middle (3), seen on consecutive ticks.
+        // Enable: right switch from down (2) to middle (3), sticks centered, left switch up (1).
         let enable_request = self.last_right_switch == Some(2) && right == Some(3);
         // Recovery: right switch at middle, sticks centered, left switch from down (2) to up (1).
         let recover_request = right == Some(3)
@@ -660,8 +625,8 @@ impl Control {
 
         match self.state {
             State::Waiting => {
-                if enable_request {
-                    // TODO: enter Prepare after valid feedback and a new enable request.
+                // TODO: enter Prepare after valid feedback and a new enable request.
+                if enable_request {                   
                     if feedback_ok {
                         self.enter_prepare();
                     } else {
@@ -787,7 +752,6 @@ async fn main(spawner: Spawner) {
     rtt_target::rtt_init_print!(rtt_target::ChannelMode::NoBlockTrim, 1024);
     let (can, watchdog, remote) = dm_mc02::init();
     rtt_target::rprintln!("Gimbal control started");
-    pid_self_test();
     spawner.spawn(dm_mc02::remote_task(remote).unwrap());
     spawner.spawn(control_task(can, watchdog).unwrap());
 }
@@ -815,7 +779,6 @@ async fn control_task(mut can: Can1, mut watchdog: dm_mc02::Watchdog) {
     let mut control = Control::default();
     let mut ticker = Ticker::every(TICK);
     let mut last = Instant::now();
-    let mut log_ticks = 0u16;
     loop {
         ticker.next().await;
         // After a stall, such as the 20 ms halt when a debug probe attaches, start the
@@ -827,20 +790,5 @@ async fn control_task(mut can: Can1, mut watchdog: dm_mc02::Watchdog) {
         last = now;
         control.tick(&mut can);
         watchdog.pet();
-
-        log_ticks += 1;
-        if log_ticks >= 200 {
-            log_ticks = 0;
-            rtt_target::rprintln!(
-                "state={:?} settle={} prepare={} fault={:?} tx_failed={}",
-                control.state,
-                control.settle_ticks,
-                control.prepare_ticks,
-                control.fault,
-                TX_FAILED.load(Ordering::Relaxed),
-            );
-            log_axis("yaw", &control.yaw);
-            log_axis("pitch", &control.pitch);
-        }
     }
 }
